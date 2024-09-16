@@ -1,0 +1,8 @@
+name = "sakura-share"
+main = "worker.js"
+compatibility_date = "2023-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sakura-share"
+database_id = "9fb790c8-d305-4739-b920-5693cb223bc4"
