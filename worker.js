@@ -1,5 +1,5 @@
 // 注册节点端点
-async function registerNode(request) {
+async function registerNode(request, env) {
     let { url } = await request.json();
     url = url.replace(/\/+$/, ''); // 去掉末尾的斜杠
     const healthUrl = `${url}/health`;
@@ -9,7 +9,7 @@ async function registerNode(request) {
         const result = await response.json();
 
         if ((result.status === "ok" || result.status === "no slot available") && await verifyModelFingerprint(url)) {
-            await addNode(url);
+            await addNode(url, env);
             return new Response('Node registered successfully', { status: 200 });
         } else {
             return new Response('Node not available', { status: 400 });
@@ -101,10 +101,10 @@ async function verifyModelNameAndFingerprint(model, fingerprintProbs) {
 }
 
 // 验证节点是否存在于 DB 中的端点
-async function verifyNode(request) {
+async function verifyNode(request, env) {
     let { url } = await request.json();
     url = url.replace(/\/+$/, ''); // 去掉末尾的斜杠
-    const nodes = await getNodes();
+    const nodes = await getNodes(env);
 
     if (nodes.includes(url)) {
         return new Response('Node exists', { status: 200 });
@@ -114,35 +114,38 @@ async function verifyNode(request) {
 }
 
 // 删除节点的端点
-async function deleteNode(request) {
+async function deleteNode(request, env) {
     let { url } = await request.json();
     url = url.replace(/\/+$/, ''); // 去掉末尾的斜杠
-    await removeNode(url);
+    await removeNode(url, env);
     return new Response('Node deleted', { status: 200 });
 }
 
 // 添加 fetch 事件监听器
-addEventListener('fetch', event => {
-    const { request } = event;
-    const { pathname } = new URL(request.url);
+export default {
+    async fetch(request, env, ctx) {
+        const { pathname } = new URL(request.url);
 
-    if (pathname === '/register-node') {
-        event.respondWith(registerNode(request));
-    } else if (pathname === '/verify-node') {
-        event.respondWith(verifyNode(request));
-    } else if (pathname === '/delete-node') {
-        event.respondWith(deleteNode(request));
-    } else if (pathname === '/completion' || pathname === '/completions' || pathname === '/v1/chat/completions') {
-        event.respondWith(handleOtherRequests(request));
+        if (pathname === '/register-node') {
+            return await registerNode(request, env);
+        } else if (pathname === '/verify-node') {
+            return await verifyNode(request, env);
+        } else if (pathname === '/delete-node') {
+            return await deleteNode(request, env);
+        } else if (pathname === '/completion' || pathname === '/completions' || pathname === '/v1/chat/completions') {
+            return await handleOtherRequests(request, env);
+        }
+
+        return new Response('Not found', { status: 404 });
     }
-});
+};
 
 // 处理 /completion /completions 和 /v1/chat/completions 请求
-async function handleOtherRequests(request) {
+async function handleOtherRequests(request, env) {
     const { pathname } = new URL(request.url);
 
     try {
-        const nodes = await getNodes();
+        const nodes = await getNodes(env);
 
         if (!nodes.length) {
             return new Response('No available nodes', { status: 503 });
@@ -167,7 +170,7 @@ async function handleOtherRequests(request) {
                     response = await fetch(healthUrl);
                 } catch (error) {
                     // 如果节点无法访问，则直接删除该节点
-                    await removeNode(nodeUrl);
+                    await removeNode(nodeUrl, env);
                     continue;
                 }
 
@@ -186,7 +189,7 @@ async function handleOtherRequests(request) {
                     return proxyResponse;
                 } else {
                     // 如果状态不为ok或no slot available，则删除节点
-                    await removeNode(nodeUrl);
+                    await removeNode(nodeUrl, env);
                 }
             }
 
@@ -209,15 +212,15 @@ async function handleOtherRequests(request) {
 }
 
 // D1操作
-async function getNodes() {
-    const { results } = await DB.prepare("SELECT url FROM nodes").all();
+async function getNodes(env) {
+    const { results } = await env.DB.prepare("SELECT url FROM nodes").all();
     return results.map(row => row.url);
 }
 
-async function addNode(url) {
-    await DB.prepare("INSERT OR IGNORE INTO nodes (url) VALUES (?)").bind(url).run();
+async function addNode(url, env) {
+    await env.DB.prepare("INSERT OR IGNORE INTO nodes (url) VALUES (?)").bind(url).run();
 }
 
-async function removeNode(url) {
-    await DB.prepare("DELETE FROM nodes WHERE url = ?").bind(url).run();
+async function removeNode(url, env) {
+    await env.DB.prepare("DELETE FROM nodes WHERE url = ?").bind(url).run();
 }
