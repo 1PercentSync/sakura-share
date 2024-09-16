@@ -9,11 +9,7 @@ async function registerNode(request) {
         const result = await response.json();
 
         if ((result.status === "ok" || result.status === "no slot available") && await verifyModelFingerprint(url)) {
-            const existingNodes = await NODES_KV.get('nodes', { type: 'json' }) || [];
-            if (!existingNodes.includes(url)) {
-                existingNodes.push(url);
-                await NODES_KV.put('nodes', JSON.stringify(existingNodes));
-            }
+            await addNode(url);
             return new Response('Node registered successfully', { status: 200 });
         } else {
             return new Response('Node not available', { status: 400 });
@@ -104,13 +100,13 @@ async function verifyModelNameAndFingerprint(model, fingerprintProbs) {
     });
 }
 
-// 验证节点是否存在于 KV 中的端点
+// 验证节点是否存在于 DB 中的端点
 async function verifyNode(request) {
     let { url } = await request.json();
     url = url.replace(/\/+$/, ''); // 去掉末尾的斜杠
-    const existingNodes = await NODES_KV.get('nodes', { type: 'json' }) || [];
+    const nodes = await getNodes();
 
-    if (existingNodes.includes(url)) {
+    if (nodes.includes(url)) {
         return new Response('Node exists', { status: 200 });
     } else {
         return new Response('Node not found', { status: 404 });
@@ -121,15 +117,8 @@ async function verifyNode(request) {
 async function deleteNode(request) {
     let { url } = await request.json();
     url = url.replace(/\/+$/, ''); // 去掉末尾的斜杠
-    await removeNodeFromKV(url);
+    await removeNode(url);
     return new Response('Node deleted', { status: 200 });
-}
-
-// 从 KV 中删除节点
-async function removeNodeFromKV(nodeUrl) {
-    const existingNodes = await NODES_KV.get('nodes', { type: 'json' }) || [];
-    const updatedNodes = existingNodes.filter(url => url !== nodeUrl);
-    await NODES_KV.put('nodes', JSON.stringify(updatedNodes));
 }
 
 // 添加 fetch 事件监听器
@@ -153,7 +142,7 @@ async function handleOtherRequests(request) {
     const { pathname } = new URL(request.url);
 
     try {
-        const nodes = await NODES_KV.get('nodes', { type: 'json' }) || [];
+        const nodes = await getNodes();
 
         if (!nodes.length) {
             return new Response('No available nodes', { status: 503 });
@@ -178,7 +167,7 @@ async function handleOtherRequests(request) {
                     response = await fetch(healthUrl);
                 } catch (error) {
                     // 如果节点无法访问，则直接删除该节点
-                    await removeNodeFromKV(nodeUrl);
+                    await removeNode(nodeUrl);
                     continue;
                 }
 
@@ -197,9 +186,8 @@ async function handleOtherRequests(request) {
                     return proxyResponse;
                 } else {
                     // 如果状态不为ok或no slot available，则删除节点
-                    await removeNodeFromKV(nodeUrl);
+                    await removeNode(nodeUrl);
                 }
-
             }
 
             return new Response('No nodes available with "ok" status', { status: 503 });
@@ -218,4 +206,18 @@ async function handleOtherRequests(request) {
     } catch (error) {
         return new Response('Error processing request', { status: 500 });
     }
+}
+
+// D1操作
+async function getNodes() {
+    const { results } = await DB.prepare("SELECT url FROM nodes").all();
+    return results.map(row => row.url);
+}
+
+async function addNode(url) {
+    await DB.prepare("INSERT OR IGNORE INTO nodes (url) VALUES (?)").bind(url).run();
+}
+
+async function removeNode(url) {
+    await DB.prepare("DELETE FROM nodes WHERE url = ?").bind(url).run();
 }
