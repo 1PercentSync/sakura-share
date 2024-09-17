@@ -63,7 +63,10 @@ async function verifyModelFingerprint(nodeUrl) {
 
 // 校验模型名称和指纹
 async function verifyModelNameAndFingerprint(model, fingerprintProbs) {
-    const allowedModel = 'sakura-14b-qwen2beta-v0.9.2-iq4xs';
+    const allowedModels = [
+        'sakura-14b-qwen2beta-v0.9.2-iq4xs',
+        'sakura-14b-qwen2beta-v0.9.2-q4km.gguf'
+    ];
     const allowedFingerprints = [
         [
             0.5601178407669067, 0.10090667009353638, 0.07124997675418854,
@@ -83,13 +86,19 @@ async function verifyModelNameAndFingerprint(model, fingerprintProbs) {
             0.03576425090432167, 0.030524807050824165, 0.029894692823290825,
             0.021998988464474678,
         ],
+        [
+            0.6689561605453491, 0.07981256395578384, 0.052107073366642,
+            0.04577327147126198, 0.04422539845108986, 0.030705934390425682,
+            0.020494865253567696, 0.020072637125849724, 0.019512630999088287,
+            0.018339477479457855,
+        ],
     ];
 
     const calculateDistance = (a, b) => {
         return a.reduce((sum, value, index) => sum + Math.abs(value - (b[index] || 0)) ** 2, 0);
     };
 
-    if (model !== allowedModel) {
+    if (!allowedModels.includes(model)) {
         return false;
     }
 
