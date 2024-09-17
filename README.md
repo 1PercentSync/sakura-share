@@ -13,6 +13,7 @@ sakura-share是一个运行在cloudflare workers的sakura节点负载均衡器�
 
 **目前仅限模型：**  
 `sakura-14b-qwen2beta-v0.9.2-iq4xs`
+`sakura-14b-qwen2beta-v0.9.2-q4km`
 
 ## API 接口：
 
