@@ -65,7 +65,7 @@ async function verifyModelFingerprint(nodeUrl) {
 async function verifyModelNameAndFingerprint(model, fingerprintProbs) {
     const allowedModels = [
         'sakura-14b-qwen2beta-v0.9.2-iq4xs',
-        'sakura-14b-qwen2beta-v0.9.2-q4km.gguf'
+        'sakura-14b-qwen2beta-v0.9.2-q4km'
     ];
     const allowedFingerprints = [
         [
