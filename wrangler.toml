@@ -9,3 +9,17 @@ database_id = "9fb790c8-d305-4739-b920-5693cb223bc4"
 
 [placement]
 mode = "smart"
+
+routes = [
+  "sakura-share.one/register-node*",
+  "sakura-share.one/verify-node*",
+  "sakura-share.one/delete-node*",
+  "sakura-share.one/completion*",
+  "sakura-share.one/completions*",
+  "sakura-share.one/v1/chat/completions*",
+  "sakura-share.one/health*"
+]
+
+routes = [
+  "sakura-share.1percentsync.games/*"
+]
