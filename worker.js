@@ -268,11 +268,17 @@ async function getHealthStatus(env) {
     });
 }
 
-// 添加处理 / 端点请求的函数
+// 处理根路径请求
 async function handleRootRequest() {
-    // 返回一个简单的 HTML 占位符
-    return new Response('<html><body><h1>Placeholder for root page</h1></body></html>', {
-        status: 200,
-        headers: { 'Content-Type': 'text/html' }
-    });
+    try {
+        const proxyResponse = await fetch("https://sakura-share-health.pages.dev/", {
+            method: 'GET',
+            redirect: 'follow'
+        });
+        return proxyResponse;
+    } catch (error) {
+        return new Response('Error fetching root proxy', { status: 500 });
+    }
 }
+
+
