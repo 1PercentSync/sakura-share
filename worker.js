@@ -145,6 +145,8 @@ export default {
             return await handleOtherRequests(request, env);
         } else if (pathname === '/health') {
             return await getHealthStatus(env);
+        } else if (pathname === '/') {
+            return await handleRootRequest();
         }
 
         return new Response('Not found', { status: 404 });
@@ -263,5 +265,14 @@ async function getHealthStatus(env) {
     return new Response(JSON.stringify({ status, slots_idle: slotsIdle, slots_processing: slotsProcessing }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
+    });
+}
+
+// 添加处理 / 端点请求的函数
+async function handleRootRequest() {
+    // 返回一个简单的 HTML 占位符
+    return new Response('<html><body><h1>Placeholder for root page</h1></body></html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' }
     });
 }
