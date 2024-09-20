@@ -143,6 +143,8 @@ export default {
             return await deleteNode(request, env);
         } else if (pathname === '/completion' || pathname === '/completions' || pathname === '/v1/chat/completions') {
             return await handleOtherRequests(request, env);
+        } else if (pathname === '/health') {
+            return await getHealthStatus(env);
         }
 
         return new Response('Not found', { status: 404 });
@@ -232,4 +234,34 @@ async function addNode(url, env) {
 
 async function removeNode(url, env) {
     await env.DB.prepare("DELETE FROM nodes WHERE url = ?").bind(url).run();
+}
+
+// 获取所有节点/health状态
+async function getHealthStatus(env) {
+    const nodes = await getNodes(env);
+    let slotsIdle = 0;
+    let slotsProcessing = 0;
+
+    for (const nodeUrl of nodes) {
+        const healthUrl = `${nodeUrl}/health`;
+        try {
+            const response = await fetch(healthUrl, { method: 'GET' });
+            const result = await response.json();
+
+            if (result.status === "ok" || result.status === "no slot available") {
+                slotsIdle += result.slots_idle || 0;
+                slotsProcessing += result.slots_processing || 0;
+            }
+        } catch (error) {
+            console.error(`Error fetching health from node: ${nodeUrl}`, error);
+            // 如果节点无法访问，则直接删除该节点
+            await removeNode(nodeUrl, env);
+        }
+    }
+
+    const status = (slotsIdle > 0) ? "ok" : "no slot available";
+    return new Response(JSON.stringify({ status, slots_idle: slotsIdle, slots_processing: slotsProcessing }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+    });
 }
