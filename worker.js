@@ -145,8 +145,6 @@ export default {
             return await handleOtherRequests(request, env);
         } else if (pathname === '/health') {
             return await getHealthStatus(env);
-        } else if (pathname === '/') {
-            return await handleRootRequest();
         }
 
         return new Response('Not found', { status: 404 });
@@ -266,19 +264,6 @@ async function getHealthStatus(env) {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
     });
-}
-
-// 处理根路径请求
-async function handleRootRequest() {
-    try {
-        const proxyResponse = await fetch("https://sakura-share-health.pages.dev/", {
-            method: 'GET',
-            redirect: 'follow'
-        });
-        return proxyResponse;
-    } catch (error) {
-        return new Response('Error fetching root proxy', { status: 500 });
-    }
 }
 
 
