@@ -4,8 +4,8 @@ sakura-share是一个运行在cloudflare workers的sakura节点负载均衡器�
 ## 使用方法：
 
 ### 公共端点：
-1. `https://sakura-share.1percentsync.games/` ，可在任何调用sakura llm的地方使用，支持/completion /completions /v1/chat/completions。
-
+1. `https://sakura-share.1percentsync.games/` ，可在任何调用sakura llm的地方使用，支持/completion /completions /v1/chat/completions。（即将迁移到sakura-share.one）
+2. `https://sakura-share.one/` 同上
 ### 提供算力（Windows）（临时隧道）：
 #### 脚本方案
 0. 从 [cloudflared](https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe) 下载cloudflared并安装
