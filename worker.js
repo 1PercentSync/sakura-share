@@ -251,6 +251,9 @@ async function getHealthStatus(env) {
             if (result.status === "ok" || result.status === "no slot available") {
                 slotsIdle += result.slots_idle || 0;
                 slotsProcessing += result.slots_processing || 0;
+            } else {
+                // 如果状态不为ok或no slot available，则删除节点
+                await removeNode(nodeUrl, env);
             }
         } catch (error) {
             console.error(`Error fetching health from node: ${nodeUrl}`, error);
