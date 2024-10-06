@@ -236,37 +236,97 @@ async function removeNode(url, env) {
     await env.DB.prepare("DELETE FROM nodes WHERE url = ?").bind(url).run();
 }
 
-// 获取所有节点/health状态
+// 获取单个节点的状态信息
+async function getNodeStatus(nodeUrl) {
+    const healthUrl = `${nodeUrl}/health`;
+    const slotsUrl = `${nodeUrl}/slots`;
+    
+    try {
+        // 首先尝试获取健康状态
+        const healthResponse = await fetch(healthUrl, { method: 'GET' });
+        const healthResult = await healthResponse.json();
+        
+        let slotsIdle = 0;
+        let slotsProcessing = 0;
+        let detailedSlots = null;
+
+        // 检查是否是旧版本的健康状态信息（直接包含slots信息）
+        if ('slots_idle' in healthResult && 'slots_processing' in healthResult) {
+            slotsIdle = healthResult.slots_idle || 0;
+            slotsProcessing = healthResult.slots_processing || 0;
+        } else {
+            // 如果是新版本，尝试从/slots接口获取详细信息
+            try {
+                const slotsResponse = await fetch(slotsUrl, { method: 'GET' });
+                const slotsResult = await slotsResponse.json();
+                
+                if (Array.isArray(slotsResult)) {
+                    detailedSlots = slotsResult;
+                    // 计算空闲和忙碌的槽位数量
+                    slotsIdle = slotsResult.filter(slot => slot.state === 0).length;
+                    slotsProcessing = slotsResult.filter(slot => slot.state !== 0).length;
+                }
+            } catch (error) {
+                console.error(`Error fetching slots from node: ${nodeUrl}`, error);
+                // 如果/slots接口不存在或出错，假设至少有一个可用槽位
+                slotsIdle = 1;
+            }
+        }
+
+        // 返回节点状态信息
+        return {
+            status: healthResult.status,
+            slotsIdle,
+            slotsProcessing,
+            detailedSlots
+        };
+    } catch (error) {
+        console.error(`Error fetching health from node: ${nodeUrl}`, error);
+        return null;
+    }
+}
+
+// 获取所有节点的健康状态
 async function getHealthStatus(env) {
     const nodes = await getNodes(env);
-    let slotsIdle = 0;
-    let slotsProcessing = 0;
+    let totalSlotsIdle = 0;
+    let totalSlotsProcessing = 0;
+    const nodeStatuses = [];
 
+    // 遍历所有节点，获取每个节点的状态
     for (const nodeUrl of nodes) {
-        const healthUrl = `${nodeUrl}/health`;
-        try {
-            const response = await fetch(healthUrl, { method: 'GET' });
-            const result = await response.json();
-
-            if (result.status === "ok" || result.status === "no slot available") {
-                slotsIdle += result.slots_idle || 0;
-                slotsProcessing += result.slots_processing || 0;
+        const nodeStatus = await getNodeStatus(nodeUrl);
+        if (nodeStatus) {
+            if (nodeStatus.status === "ok" || nodeStatus.status === "no slot available") {
+                // 累加空闲和处理中的槽位数量
+                totalSlotsIdle += nodeStatus.slotsIdle;
+                totalSlotsProcessing += nodeStatus.slotsProcessing;
+                // 将节点状态添加到列表中
+                nodeStatuses.push({
+                    url: nodeUrl,
+                    ...nodeStatus
+                });
             } else {
-                // 如果状态不为ok或no slot available，则删除节点
+                // 如果节点状态异常，从数据库中移除该节点
                 await removeNode(nodeUrl, env);
             }
-        } catch (error) {
-            console.error(`Error fetching health from node: ${nodeUrl}`, error);
-            // 如果节点无法访问，则直接删除该节点
+        } else {
+            // 如果无法获取节点状态，从数据库中移除该节点
             await removeNode(nodeUrl, env);
         }
     }
 
-    const status = (slotsIdle > 0) ? "ok" : "no slot available";
-    return new Response(JSON.stringify({ status, slots_idle: slotsIdle, slots_processing: slotsProcessing }), {
+    // 确定整体状态
+    const status = (totalSlotsIdle > 0) ? "ok" : "no slot available";
+
+    // 构造并返回响应
+    return new Response(JSON.stringify({
+        status,
+        slots_idle: totalSlotsIdle,
+        slots_processing: totalSlotsProcessing,
+        nodes: nodeStatuses
+    }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
     });
 }
-
-
