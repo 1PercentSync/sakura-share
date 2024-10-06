@@ -1,3 +1,293 @@
+class Node {
+    constructor(url, status = {}) {
+        this.url = url;
+        this.weight = status.slotsIdle || 1;
+        this.activeConnections = status.slotsProcessing || 0;
+        this.avgResponseTime = status.avgResponseTime || 0;
+        this.lastCheckTime = status.lastCheckTime || Date.now();
+        this.totalRequests = status.totalRequests || 0;
+        this.successfulRequests = status.successfulRequests || 0;
+        this.consecutiveFailures = status.consecutiveFailures || 0;
+        this.isAvailable = status.isAvailable !== undefined ? status.isAvailable : true;
+    }
+
+    get score() {
+        if (!this.isAvailable) return -Infinity;
+        const successRate = this.totalRequests > 0 ? this.successfulRequests / this.totalRequests : 1;
+        const loadFactor = Math.max(1, this.activeConnections);
+        return (this.weight * successRate) / (this.avgResponseTime * loadFactor);
+    }
+
+    updateStatus(status) {
+        this.weight = status.slotsIdle || 1;
+        this.activeConnections = status.slotsProcessing || 0;
+        this.isAvailable = status.status === "ok" || status.status === "no slot available";
+        this.lastCheckTime = Date.now();
+    }
+
+    recordRequest(success, responseTime) {
+        this.totalRequests++;
+        if (success) {
+            this.successfulRequests++;
+            this.consecutiveFailures = 0;
+            this.avgResponseTime = (this.avgResponseTime * (this.totalRequests - 1) + responseTime) / this.totalRequests;
+        } else {
+            this.consecutiveFailures++;
+            if (this.consecutiveFailures >= 5) {
+                this.isAvailable = false;
+            }
+        }
+    }
+
+    toJSON() {
+        return {
+            url: this.url,
+            weight: this.weight,
+            activeConnections: this.activeConnections,
+            avgResponseTime: this.avgResponseTime,
+            lastCheckTime: this.lastCheckTime,
+            totalRequests: this.totalRequests,
+            successfulRequests: this.successfulRequests,
+            consecutiveFailures: this.consecutiveFailures,
+            isAvailable: this.isAvailable
+        };
+    }
+}
+
+class LoadBalancer {
+    constructor(env) {
+        this.env = env;
+        this.nodes = new Map();
+        this.requestQueue = [];
+        this.ipNodeAffinity = new Map();
+        this.userRequestLimits = new Map(); // 用于跟踪用户请求限制
+        this.requestLimitPerSecond = 5; // 每个用户每秒最多允许的请求数
+    }
+
+    async init() {
+        const storedNodes = await this.getNodesFromDB();
+        for (const [url, status] of Object.entries(storedNodes)) {
+            this.nodes.set(url, new Node(url, status));
+        }
+    }
+
+    async getNodesFromDB() {
+        const { results } = await this.env.DB.prepare("SELECT * FROM node_status").all();
+        return results.reduce((acc, row) => {
+            acc[row.url] = JSON.parse(row.status);
+            return acc;
+        }, {});
+    }
+
+    async saveState() {
+        const nodeStatus = Array.from(this.nodes.entries()).map(([url, node]) => ({
+            url,
+            status: JSON.stringify(node.toJSON())
+        }));
+
+        const db = this.env.DB;
+        await db.prepare("DELETE FROM node_status").run();
+        for (const node of nodeStatus) {
+            await db.prepare("INSERT INTO node_status (url, status) VALUES (?, ?)").bind(node.url, node.status).run();
+        }
+    }
+
+    addNode(url) {
+        if (!this.nodes.has(url)) {
+            this.nodes.set(url, new Node(url));
+        }
+    }
+
+    updateNodeStatus(url, status) {
+        const node = this.nodes.get(url);
+        if (node) {
+            node.updateStatus(status);
+        }
+    }
+
+    selectNode() {
+        let bestNode = null;
+        let bestScore = -Infinity;
+
+        for (const node of this.nodes.values()) {
+            if (node.score > bestScore) {
+                bestScore = node.score;
+                bestNode = node;
+            }
+        }
+
+        return bestNode;
+    }
+
+    async handleRequest(request) {
+        const clientIP = request.headers.get('CF-Connecting-IP');
+        const url = new URL(request.url);
+        const segmentNumber = parseInt(url.searchParams.get('segment') || '1');
+        const requiredSlots = parseInt(url.searchParams.get('slots') || '1');
+        
+        // 检查用户请求限制
+        if (!this.checkAndUpdateUserRequestLimit(clientIP)) {
+            return new Response('Rate limit exceeded', { status: 429 });
+        }
+
+        let allocatedNode = this.selectNodeWithSufficientSlots(requiredSlots);
+
+        if (!allocatedNode) {
+            // 如果没有足够的slot，将请求加入队列
+            return new Promise((resolve, reject) => {
+                this.requestQueue.push({ request, resolve, reject, priority: Math.sqrt(segmentNumber), requiredSlots });
+                this.processQueue();
+            });
+        }
+
+        return this.processRequestWithAllocatedSlots(allocatedNode, requiredSlots, request);
+    }
+
+    checkAndUpdateUserRequestLimit(clientIP) {
+        const now = Date.now();
+        const userLimit = this.userRequestLimits.get(clientIP) || { count: 0, lastReset: now };
+        
+        if (now - userLimit.lastReset > 1000) {
+            // 重置计数器
+            userLimit.count = 1;
+            userLimit.lastReset = now;
+        } else {
+            userLimit.count++;
+        }
+
+        this.userRequestLimits.set(clientIP, userLimit);
+
+        return userLimit.count <= this.requestLimitPerSecond;
+    }
+
+    selectNodeWithSufficientSlots(requiredSlots) {
+        let bestNode = null;
+        let bestScore = -Infinity;
+
+        for (const node of this.nodes.values()) {
+            if (!node.isAvailable) continue;
+            const availableSlots = node.weight - node.activeConnections;
+            if (availableSlots >= requiredSlots) {
+                const score = node.score;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestNode = node;
+                }
+            }
+        }
+
+        return bestNode;
+    }
+
+    async processRequestWithAllocatedSlots(node, requiredSlots, request) {
+        node.activeConnections += requiredSlots;
+        const startTime = Date.now();
+
+        try {
+            const modifiedRequest = new Request(request);
+            modifiedRequest.headers.set('X-Allocated-Slots', requiredSlots.toString());
+
+            const response = await fetch(node.url + new URL(request.url).pathname, {
+                method: modifiedRequest.method,
+                headers: modifiedRequest.headers,
+                body: modifiedRequest.body,
+                redirect: 'follow'
+            });
+
+            const endTime = Date.now();
+            node.recordRequest(response.ok, endTime - startTime);
+
+            return response;
+        } catch (error) {
+            console.error(`Error proxying to node ${node.url}:`, error);
+            node.recordRequest(false, 0);
+            return new Response('Error processing request', { status: 500 });
+        } finally {
+            node.activeConnections -= requiredSlots;
+            this.processQueue();
+        }
+    }
+
+    selectNodeWithAffinity(clientIP, segmentNumber) {
+        const now = Date.now();
+        const affinityNode = this.ipNodeAffinity.get(clientIP);
+        
+        if (affinityNode && this.nodes.has(affinityNode) && now - this.nodes.get(affinityNode).lastUsed < 3600000) {
+            return this.nodes.get(affinityNode);
+        }
+
+        let bestNode = null;
+        let bestScore = -Infinity;
+
+        for (const node of this.nodes.values()) {
+            if (!node.isAvailable) continue;
+            const score = node.score + Math.sqrt(segmentNumber);
+            if (score > bestScore) {
+                bestScore = score;
+                bestNode = node;
+            }
+
+        }
+
+        if (bestNode) {
+            this.ipNodeAffinity.set(clientIP, bestNode.url);
+            bestNode.lastUsed = now;
+        }
+
+        return bestNode;
+    }
+
+    async processQueue() {
+        if (this.requestQueue.length === 0) return;
+
+        const availableNode = this.selectNode();
+        if (!availableNode) return;
+
+        this.requestQueue.sort((a, b) => b.priority - a.priority);
+        const { request, resolve, reject, requiredSlots } = this.requestQueue.shift();
+        
+        try {
+            const response = await this.processRequestWithAllocatedSlots(availableNode, requiredSlots, request);
+            resolve(response);
+        } catch (error) {
+            reject(error);
+        }
+    }
+
+    async performHealthCheck() {
+        const now = Date.now();
+        const checkPromises = Array.from(this.nodes.entries()).map(async ([url, node]) => {
+            if (now - node.lastCheckTime >= 5000) {  // 5 seconds
+                try {
+                    const status = await getNodeStatus(url);
+                    if (status) {
+                        this.updateNodeStatus(url, status);
+                    } else {
+                        await this.removeNode(url);
+                    }
+                } catch (error) {
+                    console.error(`Health check failed for node ${url}:`, error);
+                    node.isAvailable = false;
+                    if (node.consecutiveFailures >= 3) {
+                        await this.removeNode(url);
+                    }
+                }
+            }
+        });
+
+        await Promise.all(checkPromises);
+        await this.saveState();
+    }
+
+    async removeNode(url) {
+        this.nodes.delete(url);
+        await removeNode(url, this.env);
+        await this.saveState();
+    }
+}
+
+let loadBalancer;
+
 // 注册节点端点
 async function registerNode(request, env) {
     let { url } = await request.json();
@@ -130,98 +420,6 @@ async function deleteNode(request, env) {
     return new Response('Node deleted', { status: 200 });
 }
 
-// 添加 fetch 事件监听器
-export default {
-    async fetch(request, env, ctx) {
-        const { pathname } = new URL(request.url);
-
-        if (pathname === '/register-node') {
-            return await registerNode(request, env);
-        } else if (pathname === '/verify-node') {
-            return await verifyNode(request, env);
-        } else if (pathname === '/delete-node') {
-            return await deleteNode(request, env);
-        } else if (pathname === '/completion' || pathname === '/completions' || pathname === '/v1/chat/completions') {
-            return await handleOtherRequests(request, env);
-        } else if (pathname === '/health') {
-            return await getHealthStatus(env);
-        }
-
-        return new Response('Not found', { status: 404 });
-    }
-};
-
-// 处理 /completion /completions 和 /v1/chat/completions 请求
-async function handleOtherRequests(request, env) {
-    const { pathname } = new URL(request.url);
-
-    try {
-        const nodes = await getNodes(env);
-
-        if (!nodes.length) {
-            return new Response('No available nodes', { status: 503 });
-        }
-        const triedNodes = new Set();
-
-        async function tryProxyRequest() {
-            let nodeUrl;
-
-            while (triedNodes.size < nodes.length) {
-                nodeUrl = nodes[Math.floor(Math.random() * nodes.length)];
-
-                if (triedNodes.has(nodeUrl)) {
-                    continue; // 已经尝试过的节点跳过
-                }
-
-                triedNodes.add(nodeUrl);
-                const healthUrl = `${nodeUrl}/health`;
-                let response;
-
-                try {
-                    response = await fetch(healthUrl);
-                } catch (error) {
-                    // 如果节点无法访问，则直接删除该节点
-                    await removeNode(nodeUrl, env);
-                    continue;
-                }
-
-                const result = await response.json();
-                if (result.status === "ok" || result.status === "no slot available") {
-                    if (result.status === "no slot available") {
-                        continue;
-                    }
-                    const proxyRequest = new Request(nodeUrl + pathname, {
-                        method: request.method,
-                        headers: request.headers,
-                        body: request.body,
-                        redirect: 'follow'
-                    });
-                    const proxyResponse = await fetch(proxyRequest);
-                    return proxyResponse;
-                } else {
-                    // 如果状态不为ok或no slot available，则删除节点
-                    await removeNode(nodeUrl, env);
-                }
-            }
-
-            return new Response('No nodes available with "ok" status', { status: 503 });
-        }
-
-        // 尝试首次代理请求
-        let proxyResponse = await tryProxyRequest();
-
-        // 如果首次代理不成功，重试一次
-        if (proxyResponse.status !== 200) {
-            proxyResponse = await tryProxyRequest();
-        }
-
-        return proxyResponse;
-
-    } catch (error) {
-        return new Response('Error processing request', { status: 500 });
-    }
-}
-
 // D1操作
 async function getNodes(env) {
     const { results } = await env.DB.prepare("SELECT url FROM nodes").all();
@@ -236,37 +434,140 @@ async function removeNode(url, env) {
     await env.DB.prepare("DELETE FROM nodes WHERE url = ?").bind(url).run();
 }
 
-// 获取所有节点/health状态
+// 获取单个节点的状态信息
+async function getNodeStatus(nodeUrl) {
+    const healthUrl = `${nodeUrl}/health`;
+    const slotsUrl = `${nodeUrl}/slots`;
+    
+    try {
+        // 首先尝试获取健康状态
+        const healthResponse = await fetch(healthUrl, { method: 'GET' });
+        const healthResult = await healthResponse.json();
+        
+        let slotsIdle = 0;
+        let slotsProcessing = 0;
+        let detailedSlots = null;
+
+        // 检查是否是旧版本的健康状态信息（直接包含slots信息）
+        if ('slots_idle' in healthResult && 'slots_processing' in healthResult) {
+            slotsIdle = healthResult.slots_idle || 0;
+            slotsProcessing = healthResult.slots_processing || 0;
+        } else {
+            // 如果是新版本，尝试从/slots接口获取详细信息
+            try {
+                const slotsResponse = await fetch(slotsUrl, { method: 'GET' });
+                const slotsResult = await slotsResponse.json();
+                
+                if (Array.isArray(slotsResult)) {
+                    detailedSlots = slotsResult;
+                    // 计算空闲和忙碌的槽位数量
+                    slotsIdle = slotsResult.filter(slot => slot.state === 0).length;
+                    slotsProcessing = slotsResult.filter(slot => slot.state !== 0).length;
+                }
+            } catch (error) {
+                console.error(`Error fetching slots from node: ${nodeUrl}`, error);
+                // 如果/slots接口不存在或出错，假设至少有一个可用槽位
+                slotsIdle = 1;
+            }
+        }
+
+        // 返回节点状态信息
+        return {
+            status: healthResult.status,
+            slotsIdle,
+            slotsProcessing,
+            detailedSlots
+        };
+    } catch (error) {
+        console.error(`Error fetching health from node: ${nodeUrl}`, error);
+        return null;
+    }
+}
+
+// 获取所有节点的健康状态
 async function getHealthStatus(env) {
     const nodes = await getNodes(env);
-    let slotsIdle = 0;
-    let slotsProcessing = 0;
+    let totalSlotsIdle = 0;
+    let totalSlotsProcessing = 0;
+    const loadBalancer = new LoadBalancer(env);
+    await loadBalancer.init();
 
+    // 遍历所有节点，获取每个节点的状态
     for (const nodeUrl of nodes) {
-        const healthUrl = `${nodeUrl}/health`;
-        try {
-            const response = await fetch(healthUrl, { method: 'GET' });
-            const result = await response.json();
-
-            if (result.status === "ok" || result.status === "no slot available") {
-                slotsIdle += result.slots_idle || 0;
-                slotsProcessing += result.slots_processing || 0;
+        const nodeStatus = await getNodeStatus(nodeUrl);
+        if (nodeStatus) {
+            if (nodeStatus.status === "ok" || nodeStatus.status === "no slot available") {
+                // 累加空闲和处理中的槽位数量
+                totalSlotsIdle += nodeStatus.slotsIdle;
+                totalSlotsProcessing += nodeStatus.slotsProcessing;
+                loadBalancer.updateNodeStatus(nodeUrl, nodeStatus);
             } else {
-                // 如果状态不为ok或no slot available，则删除节点
-                await removeNode(nodeUrl, env);
+                // 如果节点状态异常，从数据库中移除该节点
+                await loadBalancer.removeNode(nodeUrl);
             }
-        } catch (error) {
-            console.error(`Error fetching health from node: ${nodeUrl}`, error);
-            // 如果节点无法访问，则直接删除该节点
-            await removeNode(nodeUrl, env);
+        } else {
+            // 如果无法获取节点状态，从数据库中移除该节点
+            await loadBalancer.removeNode(nodeUrl);
         }
     }
 
-    const status = (slotsIdle > 0) ? "ok" : "no slot available";
-    return new Response(JSON.stringify({ status, slots_idle: slotsIdle, slots_processing: slotsProcessing }), {
+    await loadBalancer.saveState();
+
+    // 确定整体状态
+    const status = (totalSlotsIdle > 0) ? "ok" : "no slot available";
+
+    // 构造并返回响应，不包含节点信息
+    return new Response(JSON.stringify({
+        status,
+        slots_idle: totalSlotsIdle,
+        slots_processing: totalSlotsProcessing
+    }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
     });
 }
 
+export default {
+    async fetch(request, env, ctx) {
+        if (!loadBalancer) {
+            loadBalancer = new LoadBalancer(env);
+            await loadBalancer.init();
+        }
 
+        const { pathname } = new URL(request.url);
+
+        // 处理特殊端点
+        if (pathname === '/register-node') {
+            return await registerNode(request, env);
+        } else if (pathname === '/verify-node') {
+            return await verifyNode(request, env);
+        } else if (pathname === '/delete-node') {
+            return await deleteNode(request, env);
+        }
+
+        // 初始化或更新负载均衡器
+        const nodes = await getNodes(env);
+        for (const nodeUrl of nodes) {
+            loadBalancer.addNode(nodeUrl);
+        }
+
+        // 执行健康检查
+        ctx.waitUntil(loadBalancer.performHealthCheck());
+
+        // 处理常规请求
+        if (pathname === '/completion' || pathname === '/completions' || pathname === '/v1/chat/completions') {
+            return await loadBalancer.handleRequest(request);
+        } else if (pathname === '/health') {
+            return await getHealthStatus(env);
+        }
+
+        // 处理其他路径
+        return new Response('Not found', { status: 404 });
+    },
+    async scheduled(event, env, ctx) {
+        // 定期清理过期的节点状态
+        const db = env.DB;
+        const expirationTime = Date.now() - 24 * 60 * 60 * 1000; // 24小时前
+        await db.prepare("DELETE FROM node_status WHERE json_extract(status, '$.lastCheckTime') < ?").bind(expirationTime).run();
+    }
+};
