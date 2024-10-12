@@ -555,7 +555,7 @@ export default {
         ctx.waitUntil(loadBalancer.performHealthCheck());
 
         // 处理常规请求
-        if (pathname === '/completion' || pathname === '/completions' || pathname === '/v1/chat/completions') {
+        if (pathname === '/completion' || pathname === '/completions' || pathname === '/v1/chat/completions'  || pathname === '/v1/models') {
             return await loadBalancer.handleRequest(request);
         } else if (pathname === '/health') {
             return await getHealthStatus(env);
