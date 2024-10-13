@@ -9,3 +9,6 @@ database_id = "9fb790c8-d305-4739-b920-5693cb223bc4"
 
 [placement]
 mode = "smart"
+
+[workers_dev]
+enabled = false
