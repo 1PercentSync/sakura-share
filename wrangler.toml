@@ -1,6 +1,7 @@
 name = "sakura-share-test"
 main = "worker.js"
 compatibility_date = "2023-01-01"
+workers_dev = false
 
 [[d1_databases]]
 binding = "DB"
@@ -10,4 +11,6 @@ database_id = "f802fabd-618e-4e5e-b192-8c88d9f44117"
 [placement]
 mode = "smart"
 
-workers_dev = false
+routes = [
+    { pattern = "sakura-share.1percentsync.games", custom_domain = true }
+]
