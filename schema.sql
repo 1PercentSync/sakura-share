@@ -1,8 +1,0 @@
-CREATE TABLE IF NOT EXISTS nodes (
-    url TEXT PRIMARY KEY
-);
-
-CREATE TABLE IF NOT EXISTS node_status (
-    url TEXT PRIMARY KEY,
-    status TEXT NOT NULL
-);
