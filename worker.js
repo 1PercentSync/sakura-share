@@ -6,6 +6,21 @@ export default {
     async fetch(request, env, ctx) {
         const { pathname } = new URL(request.url);
 
+        const method = request.method;
+
+        // Handle preflight (OPTIONS) requests
+        if (method === 'OPTIONS') {
+            return new Response(null, {
+                status: 204,
+                headers: {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+                    'Access-Control-Max-Age': '86400',  // Cache preflight response for 1 day
+                }
+            });
+        }
+
         if (pathname === '/register-node') {
             return await registerNode(request, env);
         } else if (pathname === '/verify-node') {
