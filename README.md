@@ -7,10 +7,6 @@ sakura-share是一个运行在cloudflare workers的sakura节点负载均衡器�
 1. `https://sakura-share.one/` ，可在任何调用sakura llm的地方使用，支持/completion /completions /v1/chat/completions /v1/models。
 
 ### 提供算力（Windows）（临时隧道）：
-#### 脚本方案(未更新)
-0. 从 [cloudflared](https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe) 下载cloudflared并安装
-1. 下载脚本：[cloudflared.ps1](https://github.com/1PercentSync/sakura-share/raw/main/cloudflared.ps1)。
-2. 在启动一键包后,等待模型加载后，启动该脚本，会自动注册节点，按回车下线。
 
 #### GUI方案
 1. 从 [Sakura_Launcher_GUI](https://github.com/PiDanShouRouZhouXD/Sakura_Launcher_GUI/tags) 下载 Sakura GUI 启动器（0.0.5以上版本）。
@@ -72,10 +68,7 @@ sakura-share是一个运行在cloudflare workers的sakura节点负载均衡器�
    database_id = "你的数据库ID"
    ```
 
-5. 创建数据库表：
-   ```
-   wrangler d1 execute sakura-share --file=./schema.sql --remote
-   ```
+5. 创建数据库表nodes,列url
 
 6. 部署Worker：
    ```
