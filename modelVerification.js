@@ -1,14 +1,14 @@
 // Define the list of acceptable models
 const acceptableModels = [
     {
-        id: "sakura-14b-qwen2.5-v1.0-iq4xs",
+        id: "sakura-7b-qwen2.5-v1.0-iq4xs",
         meta: {
             vocab_type: 2,
             n_vocab: 152064,
             n_ctx_train: 131072,
-            n_embd: 5120,
-            n_params: 14770033664,
-            size: 8180228096
+            n_embd: 3584,
+            n_params: 7615616512,
+            size: 4244344832
         }
     },
     // Add more acceptable models here as needed
