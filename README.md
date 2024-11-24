@@ -5,6 +5,7 @@ sakura-share是一个运行在cloudflare workers的sakura节点负载均衡器�
 
 ### 公共端点：
 1. `https://sakura-share.one/` ，可在任何调用sakura llm的地方使用，支持/completion /completions /v1/chat/completions /v1/models。
+2. 7b端点:`7b.sakura-share.one`（注意目前还不能用于绿站上传
 
 ### 提供算力（Windows）（临时隧道）：
 
