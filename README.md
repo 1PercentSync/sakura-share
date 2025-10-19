@@ -1,3 +1,5 @@
+# 归档通知:此为早期sakura share实现,并非长久以来sakura-share.one上的版本,感谢@H的在2025年年初开始的完全独立的新版开发和后续维护
+
 # sakura-share
 sakura-share是一个运行在cloudflare workers的sakura节点负载均衡器，注册节点数据存储在d1数据库，每一个发向它的请求会被导向到已注册且可用的节点，失效的节点会被自动清除。
 
